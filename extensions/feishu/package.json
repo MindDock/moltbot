@@ -1,0 +1,33 @@
+{
+  "name": "@moltbot/feishu",
+  "version": "2026.1.27-beta.1",
+  "type": "module",
+  "description": "Moltbot Feishu (Lark) channel plugin",
+  "moltbot": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "feishu",
+      "label": "Feishu",
+      "selectionLabel": "Feishu (Lark / 飞书)",
+      "docsPath": "/channels/feishu",
+      "docsLabel": "feishu",
+      "blurb": "ByteDance enterprise collaboration platform for China market.",
+      "aliases": [
+        "lark",
+        "fs"
+      ],
+      "order": 86,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@moltbot/feishu",
+      "localPath": "extensions/feishu",
+      "defaultChoice": "npm"
+    }
+  },
+  "dependencies": {
+    "moltbot": "workspace:*"
+  }
+}

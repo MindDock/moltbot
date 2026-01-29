@@ -20,6 +20,12 @@ export const KIMI_CODE_MAX_TOKENS = 32768;
 export const KIMI_CODE_HEADERS = { "User-Agent": "KimiCLI/0.77" } as const;
 export const KIMI_CODE_COMPAT = { supportsDeveloperRole: false } as const;
 
+export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+export const DEEPSEEK_DEFAULT_MODEL_ID = "deepseek-chat";
+export const DEEPSEEK_DEFAULT_MODEL_REF = `deepseek/${DEEPSEEK_DEFAULT_MODEL_ID}`;
+export const DEEPSEEK_DEFAULT_CONTEXT_WINDOW = 64000;
+export const DEEPSEEK_DEFAULT_MAX_TOKENS = 8192;
+
 // Pricing: MiniMax doesn't publish public rates. Override in models.json for accurate costs.
 export const MINIMAX_API_COST = {
   input: 15,
@@ -46,6 +52,12 @@ export const MOONSHOT_DEFAULT_COST = {
   cacheWrite: 0,
 };
 export const KIMI_CODE_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
+export const DEEPSEEK_DEFAULT_COST = {
   input: 0,
   output: 0,
   cacheRead: 0,
@@ -114,5 +126,33 @@ export function buildKimiCodeModelDefinition(): ModelDefinitionConfig {
     maxTokens: KIMI_CODE_MAX_TOKENS,
     headers: KIMI_CODE_HEADERS,
     compat: KIMI_CODE_COMPAT,
+  };
+}
+
+const DEEPSEEK_MODEL_CATALOG = {
+  "deepseek-chat": { name: "DeepSeek Chat", reasoning: false },
+  "deepseek-coder": { name: "DeepSeek Coder", reasoning: false },
+  "deepseek-reasoner": { name: "DeepSeek R1", reasoning: true },
+} as const;
+
+type DeepseekCatalogId = keyof typeof DEEPSEEK_MODEL_CATALOG;
+
+export function buildDeepseekModelDefinition(params: {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  cost?: ModelDefinitionConfig["cost"];
+  contextWindow?: number;
+  maxTokens?: number;
+}): ModelDefinitionConfig {
+  const catalog = DEEPSEEK_MODEL_CATALOG[params.id as DeepseekCatalogId];
+  return {
+    id: params.id,
+    name: params.name ?? catalog?.name ?? `DeepSeek ${params.id}`,
+    reasoning: params.reasoning ?? catalog?.reasoning ?? false,
+    input: ["text"],
+    cost: params.cost ?? DEEPSEEK_DEFAULT_COST,
+    contextWindow: params.contextWindow ?? DEEPSEEK_DEFAULT_CONTEXT_WINDOW,
+    maxTokens: params.maxTokens ?? DEEPSEEK_DEFAULT_MAX_TOKENS,
   };
 }

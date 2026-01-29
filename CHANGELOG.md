@@ -6,6 +6,9 @@ Docs: https://docs.molt.bot
 Status: beta.
 
 ### Changes
+- Providers: add DeepSeek AI provider with deepseek-chat, deepseek-coder, and deepseek-reasoner models.
+- Channels: add WeCom (WeChat Work / 企业微信) channel extension for China market enterprise messaging.
+- Channels: add Feishu (Lark / 飞书) channel extension for ByteDance enterprise collaboration.
 - Rebrand: rename the npm package/CLI to `moltbot`, add a `moltbot` compatibility shim, and move extensions to the `@moltbot/*` scope.
 - Commands: group /help and /commands output with Telegram paging. (#2504) Thanks @hougangdev.
 - macOS: limit project-local `node_modules/.bin` PATH preference to debug builds (reduce PATH hijacking risk).

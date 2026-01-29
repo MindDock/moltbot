@@ -15,6 +15,7 @@ export type AuthChoice =
   | "ai-gateway-api-key"
   | "moonshot-api-key"
   | "kimi-code-api-key"
+  | "deepseek-api-key"
   | "synthetic-api-key"
   | "venice-api-key"
   | "codex-cli"
@@ -65,6 +66,7 @@ export type OnboardOptions = {
   aiGatewayApiKey?: string;
   moonshotApiKey?: string;
   kimiCodeApiKey?: string;
+  deepseekApiKey?: string;
   geminiApiKey?: string;
   zaiApiKey?: string;
   minimaxApiKey?: string;

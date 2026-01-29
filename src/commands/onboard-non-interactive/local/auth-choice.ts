@@ -8,6 +8,7 @@ import { buildTokenProfileId, validateAnthropicSetupToken } from "../../auth-tok
 import { applyGoogleGeminiModelDefault } from "../../google-gemini-model-default.js";
 import {
   applyAuthProfileConfig,
+  applyDeepseekConfig,
   applyKimiCodeConfig,
   applyMinimaxApiConfig,
   applyMinimaxConfig,
@@ -19,6 +20,7 @@ import {
   applyVercelAiGatewayConfig,
   applyZaiConfig,
   setAnthropicApiKey,
+  setDeepseekApiKey,
   setGeminiApiKey,
   setKimiCodeApiKey,
   setMinimaxApiKey,
@@ -269,6 +271,25 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     return applyKimiCodeConfig(nextConfig);
+  }
+
+  if (authChoice === "deepseek-api-key") {
+    const resolved = await resolveNonInteractiveApiKey({
+      provider: "deepseek",
+      cfg: baseConfig,
+      flagValue: opts.deepseekApiKey,
+      flagName: "--deepseek-api-key",
+      envVar: "DEEPSEEK_API_KEY",
+      runtime,
+    });
+    if (!resolved) return null;
+    if (resolved.source !== "profile") await setDeepseekApiKey(resolved.key);
+    nextConfig = applyAuthProfileConfig(nextConfig, {
+      profileId: "deepseek:default",
+      provider: "deepseek",
+      mode: "api_key",
+    });
+    return applyDeepseekConfig(nextConfig);
   }
 
   if (authChoice === "synthetic-api-key") {

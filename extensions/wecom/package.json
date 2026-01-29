@@ -1,0 +1,34 @@
+{
+  "name": "@moltbot/wecom",
+  "version": "2026.1.27-beta.1",
+  "type": "module",
+  "description": "Moltbot WeCom (WeChat Work) channel plugin",
+  "moltbot": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "wecom",
+      "label": "WeCom",
+      "selectionLabel": "WeCom (WeChat Work)",
+      "docsPath": "/channels/wecom",
+      "docsLabel": "wecom",
+      "blurb": "Enterprise messaging platform for China market.",
+      "aliases": [
+        "wechat-work",
+        "wxwork"
+      ],
+      "order": 85,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@moltbot/wecom",
+      "localPath": "extensions/wecom",
+      "defaultChoice": "npm"
+    }
+  },
+  "dependencies": {
+    "fast-xml-parser": "5.2.3",
+    "moltbot": "workspace:*"
+  }
+}
