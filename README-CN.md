@@ -141,15 +141,29 @@ ssh ubuntu@你的服务器IP
 1. 点击「权限管理」
 2. 搜索并开通以下权限：
 
-   **消息与群组**:
-   - ✅ 获取与发送单聊、群组消息
-   - ✅ 获取群组信息
-   - ✅ 接收群聊中@机器人消息事件
+#### Required Permissions
 
-   **通讯录**:
-   - ✅ 获取用户基本信息
+| Permission | Scope | Description |
+|------------|-------|-------------|
+| `contact:user.base:readonly` | User info | Get basic user info (required to resolve sender display names for speaker attribution) |
+| `im:message` | Messaging | Send and receive messages |
+| `im:message.p2p_msg:readonly` | DM | Read direct messages to bot |
+| `im:message.group_at_msg:readonly` | Group | Receive @mention messages in groups |
+| `im:message:send_as_bot` | Send | Send messages as the bot |
+| `im:resource` | Media | Upload and download images/files |
+
+#### Optional Permissions
+
+| Permission | Scope | Description |
+|------------|-------|-------------|
+| `im:message.group_msg` | Group | Read all group messages (sensitive) |
+| `im:message:readonly` | Read | Get message history |
+| `im:message:update` | Edit | Update/edit sent messages |
+| `im:message:recall` | Recall | Recall sent messages |
+| `im:message.reactions:read` | Reactions | View message reactions |
 
 3. 点击「发布版本」→ 发布应用
+
 
 #### 2.4 配置事件订阅（重要！）
 
@@ -159,7 +173,13 @@ ssh ubuntu@你的服务器IP
    > ⚠️ **关键步骤**: 必须选择「长连接」，否则无法接收消息！
 
 3. 订阅事件：
-   - ✅ `im.message.receive_v1` - 接收消息
+
+| Event | Description |
+|-------|-------------|
+| `im.message.receive_v1` | Receive messages (required) |
+| `im.message.message_read_v1` | Message read receipts |
+| `im.chat.member.bot.added_v1` | Bot added to group |
+| `im.chat.member.bot.deleted_v1` | Bot removed from group |
 
 4. 保存配置
 
