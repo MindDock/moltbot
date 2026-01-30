@@ -265,6 +265,58 @@ export type MSTeamsStatus = {
   lastProbeAt?: number | null;
 };
 
+export type FeishuBot = {
+  appId?: string | null;
+  name?: string | null;
+};
+
+export type FeishuProbe = {
+  ok: boolean;
+  status?: number | null;
+  error?: string | null;
+  elapsedMs?: number | null;
+  bot?: FeishuBot | null;
+};
+
+export type FeishuStatus = {
+  configured: boolean;
+  appIdSource?: string | null;
+  running: boolean;
+  mode?: string | null;
+  lastStartAt?: number | null;
+  lastStopAt?: number | null;
+  lastError?: string | null;
+  probe?: FeishuProbe | null;
+  lastProbeAt?: number | null;
+  webhookUrl?: string | null;
+};
+
+export type WecomBot = {
+  corpId?: string | null;
+  agentId?: string | null;
+  name?: string | null;
+};
+
+export type WecomProbe = {
+  ok: boolean;
+  status?: number | null;
+  error?: string | null;
+  elapsedMs?: number | null;
+  bot?: WecomBot | null;
+};
+
+export type WecomStatus = {
+  configured: boolean;
+  corpIdSource?: string | null;
+  running: boolean;
+  lastStartAt?: number | null;
+  lastStopAt?: number | null;
+  lastError?: string | null;
+  probe?: WecomProbe | null;
+  lastProbeAt?: number | null;
+  webhookUrl?: string | null;
+};
+
 export type ConfigSnapshotIssue = {
   path: string;
   message: string;

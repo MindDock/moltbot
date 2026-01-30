@@ -1,13 +1,13 @@
 import type { IconName } from "./icons.js";
 
 export const TAB_GROUPS = [
-  { label: "Chat", tabs: ["chat"] },
+  { label: "聊天", tabs: ["chat"] },
   {
-    label: "Control",
+    label: "控制",
     tabs: ["overview", "channels", "instances", "sessions", "cron"],
   },
-  { label: "Agent", tabs: ["skills", "nodes"] },
-  { label: "Settings", tabs: ["config", "debug", "logs"] },
+  { label: "智能体", tabs: ["skills", "nodes"] },
+  { label: "设置", tabs: ["config", "debug", "logs"] },
 ] as const;
 
 export type Tab =
@@ -132,56 +132,56 @@ export function iconForTab(tab: Tab): IconName {
 export function titleForTab(tab: Tab) {
   switch (tab) {
     case "overview":
-      return "Overview";
+      return "概览";
     case "channels":
-      return "Channels";
+      return "通讯渠道";
     case "instances":
-      return "Instances";
+      return "实例";
     case "sessions":
-      return "Sessions";
+      return "会话";
     case "cron":
-      return "Cron Jobs";
+      return "定时任务";
     case "skills":
-      return "Skills";
+      return "技能";
     case "nodes":
-      return "Nodes";
+      return "节点";
     case "chat":
-      return "Chat";
+      return "聊天";
     case "config":
-      return "Config";
+      return "配置";
     case "debug":
-      return "Debug";
+      return "调试";
     case "logs":
-      return "Logs";
+      return "日志";
     default:
-      return "Control";
+      return "控制";
   }
 }
 
 export function subtitleForTab(tab: Tab) {
   switch (tab) {
     case "overview":
-      return "Gateway status, entry points, and a fast health read.";
+      return "网关状态、入口点和健康检查";
     case "channels":
-      return "Manage channels and settings.";
+      return "管理通讯渠道和设置";
     case "instances":
-      return "Presence beacons from connected clients and nodes.";
+      return "已连接客户端和节点的在线状态";
     case "sessions":
-      return "Inspect active sessions and adjust per-session defaults.";
+      return "查看活动会话并调整每个会话的默认设置";
     case "cron":
-      return "Schedule wakeups and recurring agent runs.";
+      return "定时唤醒和周期性智能体运行";
     case "skills":
-      return "Manage skill availability and API key injection.";
+      return "管理技能可用性和 API 密钥注入";
     case "nodes":
-      return "Paired devices, capabilities, and command exposure.";
+      return "配对设备、功能和命令";
     case "chat":
-      return "Direct gateway chat session for quick interventions.";
+      return "直接与网关聊天进行快速干预";
     case "config":
-      return "Edit ~/.clawdbot/moltbot.json safely.";
+      return "安全编辑 ~/.clawdbot/moltbot.json";
     case "debug":
-      return "Gateway snapshots, events, and manual RPC calls.";
+      return "网关快照、事件和手动 RPC 调用";
     case "logs":
-      return "Live tail of the gateway file logs.";
+      return "实时查看网关文件日志";
     default:
       return "";
   }

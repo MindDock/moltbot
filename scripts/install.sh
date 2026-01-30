@@ -181,12 +181,15 @@ if [[ -d "$MOLTBOT_DIR" ]]; then
             log_ok "非 Git 部署 (rsync/手动上传)"
         fi
 
-        # 检查是否已构建
-        if [[ -d "$MOLTBOT_DIR/node_modules" ]] && [[ -d "$MOLTBOT_DIR/dist" ]]; then
-            echo -e "${GREEN}检测到已构建的项目${NC}\n"
+        # 检查是否已构建（包括 UI）
+        if [[ -d "$MOLTBOT_DIR/node_modules" ]] && [[ -d "$MOLTBOT_DIR/dist" ]] && [[ -d "$MOLTBOT_DIR/dist/control-ui" ]]; then
+            echo -e "${GREEN}检测到已构建的项目（包括 UI）${NC}\n"
             NEED_BUILD=false
         else
             echo -e "${YELLOW}项目未构建或构建不完整${NC}\n"
+            if [[ ! -d "$MOLTBOT_DIR/dist/control-ui" ]]; then
+                log_warn "UI 未构建"
+            fi
         fi
     else
         echo -e "${YELLOW}目录 $MOLTBOT_DIR 存在但不包含 package.json${NC}\n"
@@ -402,28 +405,32 @@ fi
 # ========== 配置 nginx ==========
 echo -e "${BOLD}[4/5] 配置 Web 服务${NC}\n"
 
-NGINX_CONF='server {
+NGINX_CONF='# WebSocket upgrade map
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '\'''\'' close;
+}
+
+server {
     listen 80;
     server_name _;
 
-    # 管理后台 UI
-    location /ui {
-        proxy_pass http://127.0.0.1:18789/ui;
+    # 根路径 - WebSocket + UI
+    location / {
+        proxy_pass http://127.0.0.1:18789;
         proxy_http_version 1.1;
+
+        # WebSocket 支持
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # 标准代理头
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-    }
 
-    # WebSocket 连接 (管理后台实时通信)
-    location /ws {
-        proxy_pass http://127.0.0.1:18789;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        # WebSocket 超时
         proxy_read_timeout 86400;
     }
 
@@ -438,8 +445,6 @@ NGINX_CONF='server {
         proxy_send_timeout 120s;
         proxy_read_timeout 120s;
     }
-
-    location / { return 200 OK; add_header Content-Type text/plain; }
 }'
 
 if ! $DRY_RUN; then
@@ -559,91 +564,87 @@ GATEWAY_TOKEN="moltbot-$(openssl rand -hex 8 2>/dev/null || date +%s)"
 log_info "初始化配置..."
 cfg gateway.mode local
 cfg gateway.auth.token "$GATEWAY_TOKEN"
+cfg gateway.controlUi.basePath "/ui"
 log_ok "Gateway 配置完成"
 
 # ===== AI 提供商 =====
-echo -e "${BOLD}选择 AI 提供商:${NC}"
-echo "  1) DeepSeek     - 国产大模型，推荐"
-echo "  2) Kimi         - 月之暗面，长文本"
-echo "  3) Ollama       - 本地部署"
-echo "  4) OpenAI 兼容  - 自定义 API"
-echo ""
-read -rp "请选择 [1-4，可多选如 1,2]: " ai_choice
+# 检查是否已配置 AI 提供商
+HAS_AI_CONFIG=false
+CONFIG_FILE="$HOME/.moltbot/config.json5"
 
-IFS=',' read -ra ai_nums <<< "$ai_choice"
-first_model=""
+if [[ -f "$CONFIG_FILE" ]]; then
+    # 检查是否已配置环境变量中的 API Key
+    if grep -q "DEEPSEEK_API_KEY\|MOONSHOT_API_KEY" "$CONFIG_FILE" 2>/dev/null; then
+        HAS_AI_CONFIG=true
+    fi
+    # 或检查是否已配置默认模型
+    if grep -q "agents.*defaults.*model.*primary" "$CONFIG_FILE" 2>/dev/null; then
+        HAS_AI_CONFIG=true
+    fi
+fi
 
-for n in "${ai_nums[@]}"; do
-    n=$(echo "$n" | tr -d ' ')
-    case "$n" in
+if $HAS_AI_CONFIG; then
+    echo ""
+    log_ok "检测到已配置的 AI 提供商"
+    read -rp "是否重新配置? [y/N]: " reconfig
+    if [[ ! "$reconfig" =~ ^[Yy]$ ]]; then
+        log_info "跳过 AI 提供商配置"
+        echo ""
+    else
+        HAS_AI_CONFIG=false
+    fi
+fi
+
+if ! $HAS_AI_CONFIG; then
+    echo ""
+    echo -e "${BOLD}选择 AI 提供商:${NC}"
+    echo "  1) DeepSeek     - 国产大模型，推荐"
+    echo "  2) Kimi         - 月之暗面，长文本"
+    echo ""
+    read -rp "请选择 [1-2，可多选如 1,2]: " ai_choice
+
+    IFS=',' read -ra ai_nums <<< "$ai_choice"
+    first_model=""
+
+    for n in "${ai_nums[@]}"; do
+        n=$(echo "$n" | tr -d ' ')
+        case "$n" in
         1)
             echo ""
             echo -e "${CYAN}配置 DeepSeek${NC} (https://platform.deepseek.com)"
-            read -rsp "API Key: " key; echo
+            read -rp "API Key: " key
             if [[ -n "$key" ]]; then
-                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
-                cfg models.providers.deepseek.baseUrl "https://api.deepseek.com"
-                cfg models.providers.deepseek.apiKey "$key"
-                cfg models.providers.deepseek.api "openai-completions"
+                # 添加到环境变量配置
+                cfg env.DEEPSEEK_API_KEY "$key"
                 [[ -z "$first_model" ]] && first_model="deepseek/deepseek-chat"
-                log_ok "DeepSeek 已配置"
+                log_ok "DeepSeek 已配置 (通过环境变量)"
             fi
             ;;
         2)
             echo ""
             echo -e "${CYAN}配置 Kimi${NC} (https://platform.moonshot.cn)"
-            read -rsp "API Key: " key; echo
+            read -rp "API Key: " key
             if [[ -n "$key" ]]; then
-                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
-                cfg models.providers.moonshot.baseUrl "https://api.moonshot.ai/v1"
-                cfg models.providers.moonshot.apiKey "$key"
-                cfg models.providers.moonshot.api "openai-completions"
+                # 添加到环境变量配置
+                cfg env.MOONSHOT_API_KEY "$key"
                 [[ -z "$first_model" ]] && first_model="moonshot/kimi-k2.5"
-                log_ok "Kimi 已配置"
+                log_ok "Kimi 已配置 (通过环境变量)"
             fi
             ;;
-        3)
-            echo ""
-            echo -e "${CYAN}配置 Ollama${NC}"
-            read -rp "地址 [http://127.0.0.1:11434/v1]: " base
-            base="${base:-http://127.0.0.1:11434/v1}"
-            cfg models.providers.ollama.baseUrl "$base"
-            cfg models.providers.ollama.apiKey "ollama-local"
-            cfg models.providers.ollama.api "openai-completions"
-            log_ok "Ollama 已配置"
-            ;;
-        4)
-            echo ""
-            echo -e "${CYAN}配置 OpenAI 兼容${NC}"
-            read -rp "API Base URL: " base
-            read -rsp "API Key: " key; echo
-            if [[ -n "$key" ]]; then
-                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
-                read -rp "模型名称 [gpt-3.5-turbo]: " model
-                model="${model:-gpt-3.5-turbo}"
-                cfg models.providers.openai.baseUrl "$base"
-                cfg models.providers.openai.apiKey "$key"
-                cfg models.providers.openai.api "openai-completions"
-                [[ -z "$first_model" ]] && first_model="openai/$model"
-                log_ok "OpenAI 兼容已配置"
-            fi
-            ;;
-    esac
-done
+        esac
+    done
 
-[[ -n "$first_model" ]] && cfg models.default "$first_model"
+    [[ -n "$first_model" ]] && cfg agents.defaults.model.primary "$first_model"
+fi
 
 # ===== 通讯渠道 =====
 echo ""
 echo -e "${BOLD}选择通讯渠道:${NC}"
 echo "  1) 飞书        - 字节跳动"
 echo "  2) 企业微信    - 腾讯"
-echo "  3) Telegram   - 国际"
-echo "  4) Discord    - 国际"
-echo "  5) Slack      - 国际"
 echo "  0) 跳过"
 echo ""
-read -rp "请选择 [0-5，可多选如 1,2]: " ch_choice
+read -rp "请选择 [0-2，可多选如 1,2]: " ch_choice
 
 IFS=',' read -ra ch_nums <<< "$ch_choice"
 
@@ -655,8 +656,7 @@ for n in "${ch_nums[@]}"; do
             echo -e "${CYAN}配置飞书${NC} (https://open.feishu.cn)"
             read -rp "App ID: " app_id
             [[ -z "$app_id" ]] && continue
-            read -rsp "App Secret: " app_secret; echo
-            echo -e "${DIM}App Secret: ${app_secret:0:8}********************************${NC}"
+            read -rp "App Secret: " app_secret
             read -rp "Verification Token: " token
             read -rp "Encrypt Key (可选，直接回车跳过): " encrypt
             read -rp "允许的 open_id (逗号分隔，留空=配对模式): " allow
@@ -684,8 +684,7 @@ for n in "${ch_nums[@]}"; do
             read -rp "企业 ID (CorpID): " corp_id
             [[ -z "$corp_id" ]] && continue
             read -rp "应用 AgentId: " agent_id
-            read -rsp "应用 Secret: " secret; echo
-            echo -e "${DIM}应用 Secret: ${secret:0:8}********************************${NC}"
+            read -rp "应用 Secret: " secret
             read -rp "Token: " token
             read -rp "EncodingAESKey: " aes_key
 
@@ -698,44 +697,6 @@ for n in "${ch_nums[@]}"; do
             [[ -n "$aes_key" ]] && cfg channels.wecom.encodingAesKey "$aes_key"
             cfg channels.wecom.webhookUrl "http://${SERVER_IP}/api/webhook/wecom"
             log_ok "企业微信已配置"
-            ;;
-        3) # Telegram
-            echo ""
-            echo -e "${CYAN}配置 Telegram${NC}"
-            read -rsp "Bot Token: " token; echo
-            [[ -z "$token" ]] && continue
-            echo -e "${DIM}Bot Token: ${token:0:10}********************************${NC}"
-            log_info "保存配置..."
-            cfg channels.telegram.enabled true
-            cfg channels.telegram.botToken "$token"
-            log_ok "Telegram 已配置"
-            ;;
-        4) # Discord
-            echo ""
-            echo -e "${CYAN}配置 Discord${NC}"
-            read -rsp "Bot Token: " token; echo
-            [[ -z "$token" ]] && continue
-            echo -e "${DIM}Bot Token: ${token:0:10}********************************${NC}"
-            log_info "保存配置..."
-            cfg channels.discord.enabled true
-            cfg channels.discord.botToken "$token"
-            log_ok "Discord 已配置"
-            ;;
-        5) # Slack
-            echo ""
-            echo -e "${CYAN}配置 Slack${NC}"
-            read -rsp "Bot Token (xoxb-...): " bot_token; echo
-            [[ -z "$bot_token" ]] && continue
-            echo -e "${DIM}Bot Token: ${bot_token:0:10}********************************${NC}"
-            read -rsp "App Token (xapp-...): " app_token; echo
-            if [[ -n "$app_token" ]]; then
-                echo -e "${DIM}App Token: ${app_token:0:10}********************************${NC}"
-            fi
-            log_info "保存配置..."
-            cfg channels.slack.enabled true
-            cfg channels.slack.botToken "$bot_token"
-            [[ -n "$app_token" ]] && cfg channels.slack.appToken "$app_token"
-            log_ok "Slack 已配置"
             ;;
     esac
 done

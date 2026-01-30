@@ -5,15 +5,8 @@ import type {
   ChannelAccountSnapshot,
   ChannelUiMetaEntry,
   ChannelsStatusSnapshot,
-  DiscordStatus,
-  GoogleChatStatus,
-  IMessageStatus,
-  NostrProfile,
-  NostrStatus,
-  SignalStatus,
-  SlackStatus,
-  TelegramStatus,
-  WhatsAppStatus,
+  FeishuStatus,
+  WecomStatus,
 } from "../types";
 import type {
   ChannelKey,
@@ -22,29 +15,13 @@ import type {
 } from "./channels.types";
 import { channelEnabled, renderChannelAccountCount } from "./channels.shared";
 import { renderChannelConfigSection } from "./channels.config";
-import { renderDiscordCard } from "./channels.discord";
-import { renderGoogleChatCard } from "./channels.googlechat";
-import { renderIMessageCard } from "./channels.imessage";
-import { renderNostrCard } from "./channels.nostr";
-import { renderSignalCard } from "./channels.signal";
-import { renderSlackCard } from "./channels.slack";
-import { renderTelegramCard } from "./channels.telegram";
-import { renderWhatsAppCard } from "./channels.whatsapp";
+import { renderFeishuCard } from "./channels.feishu";
+import { renderWecomCard } from "./channels.wecom";
 
 export function renderChannels(props: ChannelsProps) {
   const channels = props.snapshot?.channels as Record<string, unknown> | null;
-  const whatsapp = (channels?.whatsapp ?? undefined) as
-    | WhatsAppStatus
-    | undefined;
-  const telegram = (channels?.telegram ?? undefined) as
-    | TelegramStatus
-    | undefined;
-  const discord = (channels?.discord ?? null) as DiscordStatus | null;
-  const googlechat = (channels?.googlechat ?? null) as GoogleChatStatus | null;
-  const slack = (channels?.slack ?? null) as SlackStatus | null;
-  const signal = (channels?.signal ?? null) as SignalStatus | null;
-  const imessage = (channels?.imessage ?? null) as IMessageStatus | null;
-  const nostr = (channels?.nostr ?? null) as NostrStatus | null;
+  const feishu = (channels?.feishu ?? null) as FeishuStatus | null;
+  const wecom = (channels?.wecom ?? null) as WecomStatus | null;
   const channelOrder = resolveChannelOrder(props.snapshot);
   const orderedChannels = channelOrder
     .map((key, index) => ({
@@ -61,14 +38,8 @@ export function renderChannels(props: ChannelsProps) {
     <section class="grid grid-cols-2">
       ${orderedChannels.map((channel) =>
         renderChannel(channel.key, props, {
-          whatsapp,
-          telegram,
-          discord,
-          googlechat,
-          slack,
-          signal,
-          imessage,
-          nostr,
+          feishu,
+          wecom,
           channelAccounts: props.snapshot?.channelAccounts ?? null,
         }),
       )}
@@ -102,14 +73,8 @@ function resolveChannelOrder(snapshot: ChannelsStatusSnapshot | null): ChannelKe
     return snapshot.channelOrder;
   }
   return [
-    "whatsapp",
-    "telegram",
-    "discord",
-    "googlechat",
-    "slack",
-    "signal",
-    "imessage",
-    "nostr",
+    "feishu",
+    "wecom",
   ];
 }
 
@@ -123,76 +88,20 @@ function renderChannel(
     data.channelAccounts,
   );
   switch (key) {
-    case "whatsapp":
-      return renderWhatsAppCard({
+    case "feishu":
+      return renderFeishuCard({
         props,
-        whatsapp: data.whatsapp,
+        feishu: data.feishu,
+        feishuAccounts: data.channelAccounts?.feishu ?? [],
         accountCountLabel,
       });
-    case "telegram":
-      return renderTelegramCard({
+    case "wecom":
+      return renderWecomCard({
         props,
-        telegram: data.telegram,
-        telegramAccounts: data.channelAccounts?.telegram ?? [],
+        wecom: data.wecom,
+        wecomAccounts: data.channelAccounts?.wecom ?? [],
         accountCountLabel,
       });
-    case "discord":
-      return renderDiscordCard({
-        props,
-        discord: data.discord,
-        accountCountLabel,
-      });
-    case "googlechat":
-      return renderGoogleChatCard({
-        props,
-        googlechat: data.googlechat,
-        accountCountLabel,
-      });
-    case "slack":
-      return renderSlackCard({
-        props,
-        slack: data.slack,
-        accountCountLabel,
-      });
-    case "signal":
-      return renderSignalCard({
-        props,
-        signal: data.signal,
-        accountCountLabel,
-      });
-    case "imessage":
-      return renderIMessageCard({
-        props,
-        imessage: data.imessage,
-        accountCountLabel,
-      });
-    case "nostr": {
-      const nostrAccounts = data.channelAccounts?.nostr ?? [];
-      const primaryAccount = nostrAccounts[0];
-      const accountId = primaryAccount?.accountId ?? "default";
-      const profile =
-        (primaryAccount as { profile?: NostrProfile | null } | undefined)?.profile ?? null;
-      const showForm =
-        props.nostrProfileAccountId === accountId ? props.nostrProfileFormState : null;
-      const profileFormCallbacks = showForm
-        ? {
-            onFieldChange: props.onNostrProfileFieldChange,
-            onSave: props.onNostrProfileSave,
-            onImport: props.onNostrProfileImport,
-            onCancel: props.onNostrProfileCancel,
-            onToggleAdvanced: props.onNostrProfileToggleAdvanced,
-          }
-        : null;
-      return renderNostrCard({
-        props,
-        nostr: data.nostr,
-        nostrAccounts,
-        accountCountLabel,
-        profileFormState: showForm,
-        profileFormCallbacks,
-        onEditProfile: () => props.onNostrProfileEdit(accountId, profile),
-      });
-    }
     default:
       return renderGenericChannelCard(key, props, data.channelAccounts ?? {});
   }
