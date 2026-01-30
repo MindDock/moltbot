@@ -515,6 +515,19 @@ export async function runEmbeddedAttempt(
       }
 
       try {
+        console.log("=== attempt.ts: BEFORE sanitizeSessionHistory ===");
+        console.log("activeSession.messages length:", activeSession.messages.length);
+        console.log(
+          "activeSession.messages roles:",
+          activeSession.messages.map((m: any) => m.role),
+        );
+        if (activeSession.messages.length > 0) {
+          console.log(
+            "First message:",
+            JSON.stringify(activeSession.messages[0], null, 2).substring(0, 300),
+          );
+        }
+
         const prior = await sanitizeSessionHistory({
           messages: activeSession.messages,
           modelApi: params.model.api,
@@ -536,7 +549,14 @@ export async function runEmbeddedAttempt(
           getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
         );
         cacheTrace?.recordStage("session:limited", { messages: limited });
+        console.log("=== Before replaceMessages ===");
+        console.log("Message count:", limited.length);
+        console.log(
+          "Message roles:",
+          limited.map((m: any) => m.role),
+        );
         if (limited.length > 0) {
+          console.log("First message sample:", JSON.stringify(limited[0], null, 2));
           activeSession.agent.replaceMessages(limited);
         }
       } catch (err) {

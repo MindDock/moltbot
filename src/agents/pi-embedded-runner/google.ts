@@ -60,10 +60,27 @@ function filterEmptyAssistantMessages(messages: AgentMessage[]): AgentMessage[] 
       out.push(msg);
       continue;
     }
-    // Filter out assistant messages with empty content (Kimi API requirement)
+    // Handle assistant messages with empty content
     if (msg.role === "assistant") {
-      const assistant = msg as Extract<AgentMessage, { role: "assistant" }>;
+      const assistant = msg as Extract<AgentMessage, { role: "assistant" }> & {
+        errorMessage?: string;
+      };
       if (Array.isArray(assistant.content) && assistant.content.length === 0) {
+        // If there's an error message, convert it to text content instead of deleting
+        if (assistant.errorMessage) {
+          touched = true;
+          out.push({
+            ...assistant,
+            content: [
+              {
+                type: "text" as const,
+                text: `[Error: ${assistant.errorMessage}]`,
+              },
+            ],
+          });
+          continue;
+        }
+        // Otherwise skip empty assistant messages (Kimi API requirement)
         touched = true;
         continue;
       }
@@ -363,6 +380,21 @@ export async function sanitizeSessionHistory(params: {
       provider: params.provider,
       modelId: params.modelId,
     });
+
+  console.log(
+    "After role filter:",
+    onlyMessages.length,
+    "roles:",
+    onlyMessages.map((m: any) => m.role),
+  );
+
+  // Check assistant messages BEFORE sanitizeImages
+  const assistantsBefore = onlyMessages.filter((m: any) => m.role === "assistant");
+  console.log("Assistant messages BEFORE sanitizeImages:", assistantsBefore.length);
+  assistantsBefore.slice(0, 3).forEach((m: any, i: number) => {
+    console.log(`  Before Assistant ${i}:`, JSON.stringify(m, null, 2).substring(0, 500));
+  });
+
   const sanitizedImages = await sanitizeSessionMessagesImages(onlyMessages, "session:history", {
     sanitizeMode: policy.sanitizeMode,
     sanitizeToolCallIds: policy.sanitizeToolCallIds,
@@ -370,14 +402,70 @@ export async function sanitizeSessionHistory(params: {
     preserveSignatures: policy.preserveSignatures,
     sanitizeThoughtSignatures: policy.sanitizeThoughtSignatures,
   });
+
+  console.log(
+    "After sanitizeImages:",
+    sanitizedImages.length,
+    "roles:",
+    sanitizedImages.map((m: any) => m.role),
+  );
+
   const sanitizedThinking = policy.normalizeAntigravityThinkingBlocks
     ? sanitizeAntigravityThinkingBlocks(sanitizedImages)
     : sanitizedImages;
+
+  console.log(
+    "After sanitizeThinking:",
+    sanitizedThinking.length,
+    "roles:",
+    sanitizedThinking.map((m: any) => m.role),
+  );
+
   const repairedTools = policy.repairToolUseResultPairing
     ? sanitizeToolUseResultPairing(sanitizedThinking)
     : sanitizedThinking;
+
+  console.log(
+    "After repairTools:",
+    repairedTools.length,
+    "roles:",
+    repairedTools.map((m: any) => m.role),
+  );
+
+  // Check assistant message content before filtering
+  const assistantMessages = repairedTools.filter((m: any) => m.role === "assistant");
+  console.log("Assistant messages before filter:", assistantMessages.length);
+  assistantMessages.forEach((m: any, i: number) => {
+    console.log(
+      `  Assistant ${i}: content type=${Array.isArray(m.content) ? "array" : typeof m.content}, length=${Array.isArray(m.content) ? m.content.length : "N/A"}`,
+    );
+    if (Array.isArray(m.content)) {
+      console.log(`    content:`, JSON.stringify(m.content).substring(0, 200));
+    }
+  });
+
   // Filter out empty assistant messages for Kimi API compatibility
   const filteredEmpty = filterEmptyAssistantMessages(repairedTools);
+
+  console.log(
+    "After filterEmpty:",
+    filteredEmpty.length,
+    "roles:",
+    filteredEmpty.map((m: any) => m.role),
+  );
+
+  // Check if conversion worked
+  const assistantsAfter = filteredEmpty.filter((m: any) => m.role === "assistant");
+  assistantsAfter.forEach((m: any, i: number) => {
+    console.log(
+      `  Assistant ${i} AFTER filter: content length=${Array.isArray(m.content) ? m.content.length : "N/A"}`,
+    );
+    if (Array.isArray(m.content) && m.content.length > 0) {
+      console.log(`    content[0]:`, JSON.stringify(m.content[0]));
+    } else {
+      console.log(`    content:`, m.content);
+    }
+  });
 
   const isOpenAIResponsesApi =
     params.modelApi === "openai-responses" || params.modelApi === "openai-codex-responses";
@@ -406,13 +494,29 @@ export async function sanitizeSessionHistory(params: {
   }
 
   if (!policy.applyGoogleTurnOrdering) {
+    console.log("=== sanitizeSessionHistory returning ===");
+    console.log("Final message count:", sanitizedOpenAI.length);
+    console.log(
+      "Final message roles:",
+      sanitizedOpenAI.map((m: any) => m.role),
+    );
+    console.log("Sample message structure:", JSON.stringify(sanitizedOpenAI[0], null, 2));
     return sanitizedOpenAI;
   }
 
-  return applyGoogleTurnOrderingFix({
+  const result = applyGoogleTurnOrderingFix({
     messages: sanitizedOpenAI,
     modelApi: params.modelApi,
     sessionManager: params.sessionManager,
     sessionId: params.sessionId,
   }).messages;
+
+  console.log("=== After Google turn ordering fix ===");
+  console.log("Final message count:", result.length);
+  console.log(
+    "Final message roles:",
+    result.map((m: any) => m.role),
+  );
+
+  return result;
 }

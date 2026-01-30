@@ -40,6 +40,7 @@ const MOONSHOT_DEFAULT_COST = {
   cacheRead: 0,
   cacheWrite: 0,
 };
+const MOONSHOT_COMPAT = { supportsDeveloperRole: false } as const;
 const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
 const KIMI_CODE_MODEL_ID = "kimi-for-coding";
 const KIMI_CODE_CONTEXT_WINDOW = 262144;
@@ -291,6 +292,7 @@ function buildMoonshotProvider(): ProviderConfig {
         cost: MOONSHOT_DEFAULT_COST,
         contextWindow: 262144,
         maxTokens: MOONSHOT_DEFAULT_MAX_TOKENS,
+        compat: MOONSHOT_COMPAT,
       },
       {
         id: "kimi-latest",

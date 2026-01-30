@@ -284,6 +284,8 @@ export function formatAssistantErrorText(
       raw,
     )
   ) {
+    console.error("=== Original role error ===");
+    console.error(raw);
     return (
       "Message ordering conflict - please try again. " +
       "If this persists, use /new to start a fresh session."
