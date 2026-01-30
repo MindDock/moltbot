@@ -52,6 +52,27 @@ function isValidAntigravitySignature(value: unknown): value is string {
   return ANTIGRAVITY_SIGNATURE_RE.test(trimmed);
 }
 
+function filterEmptyAssistantMessages(messages: AgentMessage[]): AgentMessage[] {
+  let touched = false;
+  const out: AgentMessage[] = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") {
+      out.push(msg);
+      continue;
+    }
+    // Filter out assistant messages with empty content (Kimi API requirement)
+    if (msg.role === "assistant") {
+      const assistant = msg as Extract<AgentMessage, { role: "assistant" }>;
+      if (Array.isArray(assistant.content) && assistant.content.length === 0) {
+        touched = true;
+        continue;
+      }
+    }
+    out.push(msg);
+  }
+  return touched ? out : messages;
+}
+
 function sanitizeAntigravityThinkingBlocks(messages: AgentMessage[]): AgentMessage[] {
   let touched = false;
   const out: AgentMessage[] = [];
@@ -315,6 +336,26 @@ export async function sanitizeSessionHistory(params: {
   policy?: TranscriptPolicy;
 }): Promise<AgentMessage[]> {
   // Keep docs/reference/transcript-hygiene.md in sync with any logic changes here.
+  // Filter out any messages that don't have a valid role
+  // Include Pi SDK custom message types (custom, branchSummary, compactionSummary, bashExecution)
+  // which will be converted to user messages by Pi SDK's convertToLlm
+  const validRoles = new Set([
+    "user",
+    "assistant",
+    "system",
+    "tool",
+    "toolResult",
+    "custom",
+    "branchSummary",
+    "compactionSummary",
+    "bashExecution",
+  ]);
+  const onlyMessages = params.messages.filter((msg) => {
+    if (!msg || typeof msg !== "object") return false;
+    const role = (msg as { role?: unknown }).role;
+    return typeof role === "string" && validRoles.has(role);
+  });
+
   const policy =
     params.policy ??
     resolveTranscriptPolicy({
@@ -322,7 +363,7 @@ export async function sanitizeSessionHistory(params: {
       provider: params.provider,
       modelId: params.modelId,
     });
-  const sanitizedImages = await sanitizeSessionMessagesImages(params.messages, "session:history", {
+  const sanitizedImages = await sanitizeSessionMessagesImages(onlyMessages, "session:history", {
     sanitizeMode: policy.sanitizeMode,
     sanitizeToolCallIds: policy.sanitizeToolCallIds,
     toolCallIdMode: policy.toolCallIdMode,
@@ -335,6 +376,8 @@ export async function sanitizeSessionHistory(params: {
   const repairedTools = policy.repairToolUseResultPairing
     ? sanitizeToolUseResultPairing(sanitizedThinking)
     : sanitizedThinking;
+  // Filter out empty assistant messages for Kimi API compatibility
+  const filteredEmpty = filterEmptyAssistantMessages(repairedTools);
 
   const isOpenAIResponsesApi =
     params.modelApi === "openai-responses" || params.modelApi === "openai-codex-responses";
@@ -350,8 +393,8 @@ export async function sanitizeSessionHistory(params: {
     : false;
   const sanitizedOpenAI =
     isOpenAIResponsesApi && modelChanged
-      ? downgradeOpenAIReasoningBlocks(repairedTools)
-      : repairedTools;
+      ? downgradeOpenAIReasoningBlocks(filteredEmpty)
+      : filteredEmpty;
 
   if (hasSnapshot && (!priorSnapshot || modelChanged)) {
     appendModelSnapshot(params.sessionManager, {
