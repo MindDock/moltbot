@@ -434,7 +434,7 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # Webhook (飞书/企业微信等)
+    # Webhook (企业微信等，飞书已改用长连接)
     location /api/webhook/ {
         proxy_pass http://127.0.0.1:18789;
         proxy_http_version 1.1;
@@ -662,26 +662,34 @@ for n in "${ch_nums[@]}"; do
             read -rp "App ID: " app_id
             [[ -z "$app_id" ]] && continue
             read -rp "App Secret: " app_secret
-            read -rp "Verification Token: " token
-            read -rp "Encrypt Key (可选，直接回车跳过): " encrypt
             read -rp "允许的 open_id (逗号分隔，留空=配对模式): " allow
 
-            log_info "保存飞书配置..."
+            log_info "安装飞书插件..."
+            if ! $DRY_RUN; then
+                pnpm moltbot plugins install @m1heng-clawd/feishu 2>/dev/null || log_warn "插件可能已安装"
+            fi
+
+            log_info "保存飞书配置 (WebSocket 长连接模式)..."
             cfg channels.feishu.enabled true
             cfg channels.feishu.appId "$app_id"
             cfg channels.feishu.appSecret "$app_secret"
-            [[ -n "$token" ]] && cfg channels.feishu.verificationToken "$token"
-            [[ -n "$encrypt" ]] && cfg channels.feishu.encryptKey "$encrypt"
-            cfg channels.feishu.webhookUrl "http://${SERVER_IP}/api/webhook/feishu"
+            cfg channels.feishu.domain "feishu"
+            cfg channels.feishu.connectionMode "websocket"
+            cfg channels.feishu.requireMention true
+            cfg channels.feishu.mediaMaxMb 30
+            cfg channels.feishu.renderMode "auto"
 
             if [[ -n "$allow" ]]; then
                 allow_json=$(echo "$allow" | sed 's/ //g;s/,/","/g;s/^/["/;s/$/"]/')
                 cfg channels.feishu.allowFrom "$allow_json"
                 cfg channels.feishu.dmPolicy allowlist
+                cfg channels.feishu.groupPolicy allowlist
             else
                 cfg channels.feishu.dmPolicy pairing
+                cfg channels.feishu.groupPolicy allowlist
             fi
-            log_ok "飞书已配置"
+            log_ok "飞书已配置 (使用长连接模式，无需公网 IP)"
+            echo -e "${YELLOW}重要: 在飞书开放平台选择【长连接】模式并订阅 im.message.receive_v1 事件${NC}"
             ;;
         2) # 企业微信
             echo ""
@@ -777,9 +785,9 @@ echo ""
 echo -e "${DIM}首次访问请使用上面的完整 URL（包含 token 参数）${NC}"
 echo -e "${DIM}浏览器会自动保存 token，以后可直接访问 http://${SERVER_IP}/ui/${NC}"
 echo ""
-echo -e "${BOLD}Webhook 地址:${NC}"
-echo "  飞书:     http://${SERVER_IP}/api/webhook/feishu"
-echo "  企业微信: http://${SERVER_IP}/api/webhook/wecom"
+echo -e "${BOLD}接入说明:${NC}"
+echo "  飞书:     使用长连接模式，在飞书开放平台选择【长连接】并订阅 im.message.receive_v1"
+echo "  企业微信: Webhook - http://${SERVER_IP}/api/webhook/wecom"
 echo ""
 echo -e "${BOLD}管理命令:${NC}"
 echo "  sudo systemctl status moltbot       # 查看状态"
