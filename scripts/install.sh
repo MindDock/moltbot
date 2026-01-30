@@ -565,6 +565,9 @@ log_info "初始化配置..."
 cfg gateway.mode local
 cfg gateway.auth.token "$GATEWAY_TOKEN"
 cfg gateway.controlUi.basePath "/ui"
+cfg gateway.controlUi.allowInsecureAuth true
+cfg gateway.controlUi.dangerouslyDisableDeviceAuth true
+cfg gateway.trustedProxies '["127.0.0.1", "::1"]'
 log_ok "Gateway 配置完成"
 
 # ===== AI 提供商 =====
@@ -628,6 +631,8 @@ if ! $HAS_AI_CONFIG; then
                 # 添加到环境变量配置
                 cfg env.MOONSHOT_API_KEY "$key"
                 [[ -z "$first_model" ]] && first_model="moonshot/kimi-k2.5"
+                # kimi-k2.5 要求 temperature=1
+                cfg 'agents.defaults.models["moonshot/kimi-k2.5"].params.temperature' 1
                 log_ok "Kimi 已配置 (通过环境变量)"
             fi
             ;;
@@ -766,12 +771,11 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}                    安装完成！                          ${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "服务器:  ${BOLD}http://${SERVER_IP}${NC}"
-echo -e "Token:   ${BOLD}${GATEWAY_TOKEN}${NC}"
+echo -e "${BOLD}管理后台访问地址:${NC}"
+echo -e "  ${CYAN}http://${SERVER_IP}/ui/?token=${GATEWAY_TOKEN}${NC}"
 echo ""
-echo -e "${BOLD}管理后台:${NC}"
-echo -e "  访问:  ${CYAN}http://${SERVER_IP}/ui/${NC}"
-echo -e "  Token: ${GATEWAY_TOKEN}"
+echo -e "${DIM}首次访问请使用上面的完整 URL（包含 token 参数）${NC}"
+echo -e "${DIM}浏览器会自动保存 token，以后可直接访问 http://${SERVER_IP}/ui/${NC}"
 echo ""
 echo -e "${BOLD}Webhook 地址:${NC}"
 echo "  飞书:     http://${SERVER_IP}/api/webhook/feishu"
