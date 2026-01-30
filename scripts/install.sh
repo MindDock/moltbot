@@ -714,6 +714,42 @@ for n in "${ch_nums[@]}"; do
     esac
 done
 
+# ========== 创建 auth-profiles.json ==========
+if ! $DRY_RUN; then
+    echo ""
+    log_info "创建认证配置文件（避免 API key 间歇性失败）..."
+
+    AGENT_DIR="$HOME/.moltbot/agents/main/agent"
+    mkdir -p "$AGENT_DIR"
+    AUTH_PROFILES="$AGENT_DIR/auth-profiles.json"
+
+    # 构建 JSON
+    echo "{" > "$AUTH_PROFILES"
+    FIRST=true
+
+    # DeepSeek
+    DEEPSEEK_KEY=$(pnpm moltbot config get env.DEEPSEEK_API_KEY 2>/dev/null | grep -v "^>" | grep -v "Config warnings" | tail -1 | tr -d '"' | xargs || echo "")
+    if [[ -n "$DEEPSEEK_KEY" ]]; then
+        [[ "$FIRST" == false ]] && echo "," >> "$AUTH_PROFILES"
+        echo "  \"deepseek\": { \"apiKey\": \"$DEEPSEEK_KEY\" }" >> "$AUTH_PROFILES"
+        FIRST=false
+    fi
+
+    # Moonshot
+    MOONSHOT_KEY=$(pnpm moltbot config get env.MOONSHOT_API_KEY 2>/dev/null | grep -v "^>" | grep -v "Config warnings" | tail -1 | tr -d '"' | xargs || echo "")
+    if [[ -n "$MOONSHOT_KEY" ]]; then
+        [[ "$FIRST" == false ]] && echo "," >> "$AUTH_PROFILES"
+        echo "  \"moonshot\": { \"apiKey\": \"$MOONSHOT_KEY\" }" >> "$AUTH_PROFILES"
+        FIRST=false
+    fi
+
+    echo "}" >> "$AUTH_PROFILES"
+    chmod 600 "$AUTH_PROFILES"
+    log_ok "认证配置文件已创建: $AUTH_PROFILES\n"
+else
+    echo -e "${DIM}[dry-run] 跳过认证配置文件创建${NC}\n"
+fi
+
 # ========== 配置并启动系统服务 ==========
 if ! $DRY_RUN; then
     log_info "配置系统服务..."
