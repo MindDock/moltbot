@@ -13,6 +13,11 @@ DRY_RUN=false
 [[ -n "$DEBUG" ]] && set -x
 $DRY_RUN || set -e
 
+# 禁用交互式提示
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
 # dry-run 模式下的命令包装
 run() {
     if $DRY_RUN; then
@@ -26,6 +31,7 @@ MOLTBOT_DIR="${MOLTBOT_DIR:-$HOME/moltbot}"
 GATEWAY_PORT="${GATEWAY_PORT:-18789}"
 GITHUB_REPO="https://github.com/MindDock/moltbot.git"
 GITEE_REPO="https://gitee.com/minddock/moltbot.git"
+NODE_MIN_VERSION=22
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -47,6 +53,37 @@ get_ip() {
     hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost"
 }
 
+# 检查 Node.js 版本是否满足要求
+check_node_version() {
+    if ! command -v node &>/dev/null; then
+        return 1
+    fi
+    local version=$(node -v | sed 's/v//' | cut -d. -f1)
+    [[ $version -ge $NODE_MIN_VERSION ]]
+}
+
+# 带重试的命令执行
+retry_cmd() {
+    local max_attempts=3
+    local attempt=1
+    local delay=2
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+        if [[ $attempt -lt $max_attempts ]]; then
+            log_warn "命令失败，${delay}秒后重试 (${attempt}/${max_attempts})..."
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    log_err "命令执行失败: $*"
+    return 1
+}
+
 clear
 echo -e "${CYAN}"
 cat << 'EOF'
@@ -59,80 +96,311 @@ EOF
 echo -e "${NC}"
 echo -e "${DIM}智慧大脑${NC}\n"
 
-[[ $EUID -eq 0 ]] && log_err "请使用普通用户运行 (非 root)"
+if [[ $EUID -eq 0 ]]; then
+    log_err "请使用普通用户运行 (非 root)"
+    exit 1
+fi
 
 SERVER_IP=$(get_ip)
 echo -e "服务器 IP: ${BOLD}${SERVER_IP}${NC}\n"
 
-# ========== 检测安装状态 ==========
-NEED_INSTALL=true
-NEED_BUILD=true
-
-if [[ -d "$MOLTBOT_DIR/node_modules" ]] && [[ -d "$MOLTBOT_DIR/dist" ]]; then
-    echo -e "${GREEN}检测到已安装的 Moltbot${NC} ($MOLTBOT_DIR)\n"
-    NEED_INSTALL=false
-    NEED_BUILD=false
-elif [[ -d "$MOLTBOT_DIR" ]]; then
-    echo -e "${YELLOW}检测到 Moltbot 目录但未构建${NC}\n"
-    NEED_INSTALL=false
-fi
-
-# ========== 安装依赖 ==========
-if $NEED_INSTALL && ! $DRY_RUN; then
-    echo -e "${BOLD}[1/5] 安装系统依赖${NC}\n"
-
-    if command -v apt-get &>/dev/null; then
-        if ! command -v node &>/dev/null || [[ ! $(node -v) =~ ^v2[2-9] ]]; then
-            log_info "安装 Node.js 22..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
-        fi
-        command -v pnpm &>/dev/null || { log_info "安装 pnpm..."; sudo npm install -g pnpm; }
-        command -v nginx &>/dev/null || { log_info "安装 nginx..."; sudo apt-get install -y nginx; }
-        command -v git &>/dev/null || { log_info "安装 git..."; sudo apt-get install -y git; }
-    elif command -v yum &>/dev/null; then
-        if ! command -v node &>/dev/null || [[ ! $(node -v) =~ ^v2[2-9] ]]; then
-            log_info "安装 Node.js 22..."
-            curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
-            sudo yum install -y nodejs
-        fi
-        command -v pnpm &>/dev/null || { log_info "安装 pnpm..."; sudo npm install -g pnpm; }
-        command -v nginx &>/dev/null || { log_info "安装 nginx..."; sudo yum install -y nginx; }
-        command -v git &>/dev/null || { log_info "安装 git..."; sudo yum install -y git; }
-    else
-        log_warn "未检测到 apt/yum，跳过系统依赖安装"
-    fi
-    log_ok "系统依赖就绪"
-
-    echo -e "\n${BOLD}[2/5] 获取代码${NC}\n"
-    log_info "克隆仓库..."
-    git clone "$GITHUB_REPO" "$MOLTBOT_DIR" 2>/dev/null || git clone "$GITEE_REPO" "$MOLTBOT_DIR"
-    log_ok "代码获取完成"
-elif $DRY_RUN; then
-    echo -e "${DIM}[dry-run] 跳过系统依赖安装和代码克隆${NC}"
-fi
-
+# ========== 检测系统环境 ==========
 if ! $DRY_RUN; then
-    cd "$MOLTBOT_DIR"
+    echo -e "${BOLD}检测系统环境${NC}\n"
+
+    # 检测包管理器
+    if command -v apt-get &>/dev/null; then
+        PKG_MANAGER="apt"
+        log_ok "包管理器: apt-get (Debian/Ubuntu)"
+    elif command -v yum &>/dev/null; then
+        PKG_MANAGER="yum"
+        log_ok "包管理器: yum (CentOS/RHEL)"
+    else
+        PKG_MANAGER="unknown"
+        log_warn "未识别的包管理器"
+    fi
+
+    # 检测必需工具
+    MISSING_DEPS=()
+
+    if ! command -v curl &>/dev/null; then
+        MISSING_DEPS+=("curl")
+    else
+        log_ok "curl 已安装"
+    fi
+
+    if ! command -v git &>/dev/null; then
+        MISSING_DEPS+=("git")
+    else
+        log_ok "git 已安装: $(git --version | head -n1)"
+    fi
+
+    if ! check_node_version; then
+        MISSING_DEPS+=("nodejs")
+    else
+        log_ok "Node.js 已安装: $(node -v)"
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        MISSING_DEPS+=("npm")
+    else
+        log_ok "npm 已安装: $(npm -v)"
+    fi
+
+    if ! command -v pnpm &>/dev/null; then
+        MISSING_DEPS+=("pnpm")
+    else
+        log_ok "pnpm 已安装: $(pnpm -v)"
+    fi
+
+    if ! command -v nginx &>/dev/null; then
+        MISSING_DEPS+=("nginx")
+    else
+        log_ok "nginx 已安装: $(nginx -v 2>&1 | head -n1)"
+    fi
+
+    echo ""
+fi
+
+# ========== 检测安装状态 ==========
+NEED_CLONE=true
+NEED_BUILD=true
+IS_GIT_REPO=false
+
+if [[ -d "$MOLTBOT_DIR" ]]; then
+    # 检查是否是有效的 Moltbot 项目目录
+    if [[ -f "$MOLTBOT_DIR/package.json" ]]; then
+        echo -e "${GREEN}检测到 Moltbot 项目目录${NC} ($MOLTBOT_DIR)"
+        NEED_CLONE=false
+
+        # 检查是否是 Git 仓库
+        if [[ -d "$MOLTBOT_DIR/.git" ]]; then
+            IS_GIT_REPO=true
+            log_ok "Git 仓库 (可通过 git pull 更新)"
+        else
+            log_ok "非 Git 部署 (rsync/手动上传)"
+        fi
+
+        # 检查是否已构建
+        if [[ -d "$MOLTBOT_DIR/node_modules" ]] && [[ -d "$MOLTBOT_DIR/dist" ]]; then
+            echo -e "${GREEN}检测到已构建的项目${NC}\n"
+            NEED_BUILD=false
+        else
+            echo -e "${YELLOW}项目未构建或构建不完整${NC}\n"
+        fi
+    else
+        echo -e "${YELLOW}目录 $MOLTBOT_DIR 存在但不包含 package.json${NC}\n"
+        log_warn "该目录似乎不是有效的 Moltbot 项目"
+        read -rp "是否删除该目录并重新安装? [y/N]: " remove_dir
+        if [[ "$remove_dir" =~ ^[Yy]$ ]]; then
+            rm -rf "$MOLTBOT_DIR"
+            log_ok "目录已删除，将重新克隆代码"
+        else
+            log_err "安装已取消"
+            exit 1
+        fi
+    fi
+else
+    echo -e "${BLUE}准备全新安装${NC}\n"
+fi
+
+# ========== 安装系统依赖 ==========
+if ! $DRY_RUN && [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+    echo -e "${BOLD}[1/5] 安装系统依赖${NC}\n"
+    log_info "缺少以下依赖: ${MISSING_DEPS[*]}"
+
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        log_info "更新 apt 缓存..."
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+
+        # 安装基础工具
+        if [[ " ${MISSING_DEPS[*]} " =~ " curl " ]]; then
+            log_info "安装 curl..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl
+        fi
+
+        if [[ " ${MISSING_DEPS[*]} " =~ " git " ]]; then
+            log_info "安装 git..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q git
+        fi
+
+        # 安装 Node.js
+        if [[ " ${MISSING_DEPS[*]} " =~ " nodejs " ]]; then
+            log_info "安装 Node.js ${NODE_MIN_VERSION}..."
+            retry_cmd curl -fsSL https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x | sudo -E bash -
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs
+
+            if ! check_node_version; then
+                log_err "Node.js 安装失败或版本不满足要求 (需要 v${NODE_MIN_VERSION}+)"
+                exit 1
+            fi
+            log_ok "Node.js $(node -v) 安装成功"
+        fi
+
+        # 安装 pnpm
+        if [[ " ${MISSING_DEPS[*]} " =~ " pnpm " ]]; then
+            log_info "安装 pnpm..."
+            retry_cmd sudo npm install -g pnpm
+
+            if ! command -v pnpm &>/dev/null; then
+                log_err "pnpm 安装失败"
+                exit 1
+            fi
+            log_ok "pnpm $(pnpm -v) 安装成功"
+        fi
+
+        # 安装 nginx
+        if [[ " ${MISSING_DEPS[*]} " =~ " nginx " ]]; then
+            log_info "安装 nginx..."
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q nginx
+            log_ok "nginx 安装成功"
+        fi
+
+    elif [[ "$PKG_MANAGER" == "yum" ]]; then
+        # 安装基础工具
+        if [[ " ${MISSING_DEPS[*]} " =~ " curl " ]]; then
+            log_info "安装 curl..."
+            sudo yum install -y curl
+        fi
+
+        if [[ " ${MISSING_DEPS[*]} " =~ " git " ]]; then
+            log_info "安装 git..."
+            sudo yum install -y git
+        fi
+
+        # 安装 Node.js
+        if [[ " ${MISSING_DEPS[*]} " =~ " nodejs " ]]; then
+            log_info "安装 Node.js ${NODE_MIN_VERSION}..."
+            retry_cmd curl -fsSL https://rpm.nodesource.com/setup_${NODE_MIN_VERSION}.x | sudo bash -
+            sudo yum install -y nodejs
+
+            if ! check_node_version; then
+                log_err "Node.js 安装失败或版本不满足要求 (需要 v${NODE_MIN_VERSION}+)"
+                exit 1
+            fi
+            log_ok "Node.js $(node -v) 安装成功"
+        fi
+
+        # 安装 pnpm
+        if [[ " ${MISSING_DEPS[*]} " =~ " pnpm " ]]; then
+            log_info "安装 pnpm..."
+            retry_cmd sudo npm install -g pnpm
+
+            if ! command -v pnpm &>/dev/null; then
+                log_err "pnpm 安装失败"
+                exit 1
+            fi
+            log_ok "pnpm $(pnpm -v) 安装成功"
+        fi
+
+        # 安装 nginx
+        if [[ " ${MISSING_DEPS[*]} " =~ " nginx " ]]; then
+            log_info "安装 nginx..."
+            sudo yum install -y nginx
+            log_ok "nginx 安装成功"
+        fi
+
+    else
+        log_err "无法自动安装依赖，请手动安装: ${MISSING_DEPS[*]}"
+        exit 1
+    fi
+
+    log_ok "系统依赖就绪\n"
+elif ! $DRY_RUN; then
+    echo -e "${BOLD}[1/5] 系统依赖${NC}\n"
+    log_ok "所有依赖已满足\n"
+else
+    echo -e "${DIM}[dry-run] 跳过依赖安装${NC}\n"
+fi
+
+# ========== 获取代码 ==========
+if $NEED_CLONE && ! $DRY_RUN; then
+    echo -e "${BOLD}[2/5] 获取代码${NC}\n"
+    log_info "克隆仓库到 $MOLTBOT_DIR..."
+
+    # 优先尝试 GitHub，失败则使用 Gitee
+    if ! git clone "$GITHUB_REPO" "$MOLTBOT_DIR" 2>/dev/null; then
+        log_warn "GitHub 克隆失败，尝试 Gitee 镜像..."
+        if ! git clone "$GITEE_REPO" "$MOLTBOT_DIR"; then
+            log_err "代码克隆失败"
+            exit 1
+        fi
+    fi
+
+    IS_GIT_REPO=true
+    log_ok "代码获取完成\n"
+elif ! $DRY_RUN; then
+    echo -e "${BOLD}[2/5] 代码仓库${NC}\n"
+    log_ok "代码已存在，跳过克隆"
+
+    # 如果是 Git 仓库，尝试更新代码
+    if [[ "$IS_GIT_REPO" == true ]]; then
+        cd "$MOLTBOT_DIR"
+        log_info "检查更新..."
+        git fetch origin --quiet 2>/dev/null || true
+        LOCAL=$(git rev-parse @ 2>/dev/null)
+        REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
+
+        if [[ "$LOCAL" != "$REMOTE" ]]; then
+            log_warn "发现新版本"
+            read -rp "是否更新到最新版本? [y/N]: " update_code
+            if [[ "$update_code" =~ ^[Yy]$ ]]; then
+                git pull
+                log_ok "代码已更新"
+                NEED_BUILD=true  # 更新后需要重新构建
+            fi
+        else
+            log_ok "代码已是最新"
+        fi
+    else
+        log_info "非 Git 仓库，如需更新请使用 rsync 或其他方式同步代码"
+    fi
+    echo ""
+else
+    echo -e "${DIM}[dry-run] 跳过代码克隆${NC}\n"
+fi
+
+# ========== 构建项目 ==========
+if ! $DRY_RUN; then
+    cd "$MOLTBOT_DIR" || exit 1
 else
     echo -e "${DIM}[dry-run] cd $MOLTBOT_DIR${NC}"
 fi
 
 if $NEED_BUILD && ! $DRY_RUN; then
-    echo -e "\n${BOLD}[3/5] 构建项目${NC}\n"
-    log_info "安装依赖..."
-    pnpm install
+    echo -e "${BOLD}[3/5] 构建项目${NC}\n"
+
+    log_info "安装 npm 依赖..."
+    if ! pnpm install; then
+        log_err "依赖安装失败"
+        exit 1
+    fi
+    log_ok "依赖安装完成"
+
     log_info "构建主程序..."
-    pnpm build
+    if ! pnpm build; then
+        log_err "主程序构建失败"
+        exit 1
+    fi
+    log_ok "主程序构建完成"
+
     log_info "构建管理后台 UI..."
-    pnpm ui:build
-    log_ok "构建完成"
-elif $DRY_RUN; then
-    echo -e "${DIM}[dry-run] 跳过构建${NC}"
+    if ! pnpm ui:build; then
+        log_err "UI 构建失败"
+        exit 1
+    fi
+    log_ok "UI 构建完成"
+
+    log_ok "项目构建完成\n"
+elif ! $DRY_RUN; then
+    echo -e "${BOLD}[3/5] 项目构建${NC}\n"
+    log_ok "项目已构建，跳过\n"
+else
+    echo -e "${DIM}[dry-run] 跳过构建${NC}\n"
 fi
 
 # ========== 配置 nginx ==========
-echo -e "\n${BOLD}[4/5] 配置 Web 服务${NC}\n"
+echo -e "${BOLD}[4/5] 配置 Web 服务${NC}\n"
 
 NGINX_CONF='server {
     listen 80;
@@ -175,26 +443,102 @@ NGINX_CONF='server {
 }'
 
 if ! $DRY_RUN; then
+    NGINX_CONFIGURED=false
+
     if [[ -d /etc/nginx/sites-available ]]; then
         # Debian/Ubuntu
-        if [[ ! -f /etc/nginx/sites-available/moltbot ]]; then
-            log_info "配置 nginx..."
+        if [[ -f /etc/nginx/sites-available/moltbot ]]; then
+            log_ok "nginx 配置已存在"
+            NGINX_CONFIGURED=true
+        else
+            log_info "创建 nginx 配置..."
             echo "$NGINX_CONF" | sudo tee /etc/nginx/sites-available/moltbot >/dev/null
             sudo ln -sf /etc/nginx/sites-available/moltbot /etc/nginx/sites-enabled/moltbot
             sudo rm -f /etc/nginx/sites-enabled/default
-            sudo nginx -t && sudo systemctl restart nginx
+
+            log_info "测试 nginx 配置..."
+            if sudo nginx -t 2>&1 | grep -q "successful"; then
+                log_ok "nginx 配置有效"
+                sudo systemctl enable nginx >/dev/null 2>&1
+                sudo systemctl restart nginx
+
+                if systemctl is-active --quiet nginx; then
+                    log_ok "nginx 启动成功"
+                    NGINX_CONFIGURED=true
+                else
+                    log_err "nginx 启动失败"
+                fi
+            else
+                log_err "nginx 配置测试失败"
+                sudo nginx -t
+            fi
         fi
     elif [[ -d /etc/nginx/conf.d ]]; then
         # CentOS/RHEL
-        if [[ ! -f /etc/nginx/conf.d/moltbot.conf ]]; then
-            log_info "配置 nginx..."
+        if [[ -f /etc/nginx/conf.d/moltbot.conf ]]; then
+            log_ok "nginx 配置已存在"
+            NGINX_CONFIGURED=true
+        else
+            log_info "创建 nginx 配置..."
             echo "$NGINX_CONF" | sudo tee /etc/nginx/conf.d/moltbot.conf >/dev/null
-            sudo nginx -t && sudo systemctl restart nginx
+
+            log_info "测试 nginx 配置..."
+            if sudo nginx -t 2>&1 | grep -q "successful"; then
+                log_ok "nginx 配置有效"
+                sudo systemctl enable nginx >/dev/null 2>&1
+                sudo systemctl restart nginx
+
+                if systemctl is-active --quiet nginx; then
+                    log_ok "nginx 启动成功"
+                    NGINX_CONFIGURED=true
+                else
+                    log_err "nginx 启动失败"
+                fi
+            else
+                log_err "nginx 配置测试失败"
+                sudo nginx -t
+            fi
+        fi
+    else
+        log_warn "未找到 nginx 配置目录"
+    fi
+
+    # 检查防火墙 (Ubuntu/Debian)
+    if command -v ufw &>/dev/null; then
+        if sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+            if ! sudo ufw status | grep -q "80/tcp"; then
+                log_warn "检测到 UFW 防火墙已启用但端口 80 未开放"
+                read -rp "是否开放端口 80? [y/N]: " open_port
+                if [[ "$open_port" =~ ^[Yy]$ ]]; then
+                    sudo ufw allow 80/tcp
+                    log_ok "端口 80 已开放"
+                fi
+            fi
         fi
     fi
-    log_ok "nginx 就绪"
+
+    # 检查防火墙 (CentOS/RHEL)
+    if command -v firewall-cmd &>/dev/null; then
+        if sudo firewall-cmd --state 2>/dev/null | grep -q "running"; then
+            if ! sudo firewall-cmd --list-ports | grep -q "80/tcp"; then
+                log_warn "检测到 firewalld 已启用但端口 80 未开放"
+                read -rp "是否开放端口 80? [y/N]: " open_port
+                if [[ "$open_port" =~ ^[Yy]$ ]]; then
+                    sudo firewall-cmd --permanent --add-port=80/tcp
+                    sudo firewall-cmd --reload
+                    log_ok "端口 80 已开放"
+                fi
+            fi
+        fi
+    fi
+
+    if $NGINX_CONFIGURED; then
+        log_ok "Web 服务配置完成\n"
+    else
+        log_warn "Web 服务配置可能未完成，请手动检查\n"
+    fi
 else
-    echo -e "${DIM}[dry-run] 跳过 nginx 配置${NC}"
+    echo -e "${DIM}[dry-run] 跳过 nginx 配置${NC}\n"
 fi
 
 # ========== 交互式配置 ==========
@@ -237,7 +581,10 @@ for n in "${ai_nums[@]}"; do
             echo -e "${CYAN}配置 DeepSeek${NC} (https://platform.deepseek.com)"
             read -rsp "API Key: " key; echo
             if [[ -n "$key" ]]; then
-                cfg providers.deepseek.apiKey "$key"
+                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
+                cfg models.providers.deepseek.baseUrl "https://api.deepseek.com"
+                cfg models.providers.deepseek.apiKey "$key"
+                cfg models.providers.deepseek.api "openai-completions"
                 [[ -z "$first_model" ]] && first_model="deepseek/deepseek-chat"
                 log_ok "DeepSeek 已配置"
             fi
@@ -247,7 +594,10 @@ for n in "${ai_nums[@]}"; do
             echo -e "${CYAN}配置 Kimi${NC} (https://platform.moonshot.cn)"
             read -rsp "API Key: " key; echo
             if [[ -n "$key" ]]; then
-                cfg providers.moonshot.apiKey "$key"
+                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
+                cfg models.providers.moonshot.baseUrl "https://api.moonshot.ai/v1"
+                cfg models.providers.moonshot.apiKey "$key"
+                cfg models.providers.moonshot.api "openai-completions"
                 [[ -z "$first_model" ]] && first_model="moonshot/kimi-k2.5"
                 log_ok "Kimi 已配置"
             fi
@@ -255,9 +605,11 @@ for n in "${ai_nums[@]}"; do
         3)
             echo ""
             echo -e "${CYAN}配置 Ollama${NC}"
-            read -rp "地址 [http://127.0.0.1:11434]: " base
-            base="${base:-http://127.0.0.1:11434}"
-            cfg providers.ollama.baseUrl "$base"
+            read -rp "地址 [http://127.0.0.1:11434/v1]: " base
+            base="${base:-http://127.0.0.1:11434/v1}"
+            cfg models.providers.ollama.baseUrl "$base"
+            cfg models.providers.ollama.apiKey "ollama-local"
+            cfg models.providers.ollama.api "openai-completions"
             log_ok "Ollama 已配置"
             ;;
         4)
@@ -265,11 +617,13 @@ for n in "${ai_nums[@]}"; do
             echo -e "${CYAN}配置 OpenAI 兼容${NC}"
             read -rp "API Base URL: " base
             read -rsp "API Key: " key; echo
-            read -rp "模型名称 [gpt-3.5-turbo]: " model
-            model="${model:-gpt-3.5-turbo}"
             if [[ -n "$key" ]]; then
-                cfg providers.openai.baseUrl "$base"
-                cfg providers.openai.apiKey "$key"
+                echo -e "${DIM}API Key: ${key:0:8}********************************${NC}"
+                read -rp "模型名称 [gpt-3.5-turbo]: " model
+                model="${model:-gpt-3.5-turbo}"
+                cfg models.providers.openai.baseUrl "$base"
+                cfg models.providers.openai.apiKey "$key"
+                cfg models.providers.openai.api "openai-completions"
                 [[ -z "$first_model" ]] && first_model="openai/$model"
                 log_ok "OpenAI 兼容已配置"
             fi
@@ -302,6 +656,7 @@ for n in "${ch_nums[@]}"; do
             read -rp "App ID: " app_id
             [[ -z "$app_id" ]] && continue
             read -rsp "App Secret: " app_secret; echo
+            echo -e "${DIM}App Secret: ${app_secret:0:8}********************************${NC}"
             read -rp "Verification Token: " token
             read -rp "Encrypt Key (可选，直接回车跳过): " encrypt
             read -rp "允许的 open_id (逗号分隔，留空=配对模式): " allow
@@ -330,6 +685,7 @@ for n in "${ch_nums[@]}"; do
             [[ -z "$corp_id" ]] && continue
             read -rp "应用 AgentId: " agent_id
             read -rsp "应用 Secret: " secret; echo
+            echo -e "${DIM}应用 Secret: ${secret:0:8}********************************${NC}"
             read -rp "Token: " token
             read -rp "EncodingAESKey: " aes_key
 
@@ -348,6 +704,7 @@ for n in "${ch_nums[@]}"; do
             echo -e "${CYAN}配置 Telegram${NC}"
             read -rsp "Bot Token: " token; echo
             [[ -z "$token" ]] && continue
+            echo -e "${DIM}Bot Token: ${token:0:10}********************************${NC}"
             log_info "保存配置..."
             cfg channels.telegram.enabled true
             cfg channels.telegram.botToken "$token"
@@ -358,6 +715,7 @@ for n in "${ch_nums[@]}"; do
             echo -e "${CYAN}配置 Discord${NC}"
             read -rsp "Bot Token: " token; echo
             [[ -z "$token" ]] && continue
+            echo -e "${DIM}Bot Token: ${token:0:10}********************************${NC}"
             log_info "保存配置..."
             cfg channels.discord.enabled true
             cfg channels.discord.botToken "$token"
@@ -368,7 +726,11 @@ for n in "${ch_nums[@]}"; do
             echo -e "${CYAN}配置 Slack${NC}"
             read -rsp "Bot Token (xoxb-...): " bot_token; echo
             [[ -z "$bot_token" ]] && continue
+            echo -e "${DIM}Bot Token: ${bot_token:0:10}********************************${NC}"
             read -rsp "App Token (xapp-...): " app_token; echo
+            if [[ -n "$app_token" ]]; then
+                echo -e "${DIM}App Token: ${app_token:0:10}********************************${NC}"
+            fi
             log_info "保存配置..."
             cfg channels.slack.enabled true
             cfg channels.slack.botToken "$bot_token"
@@ -378,11 +740,16 @@ for n in "${ch_nums[@]}"; do
     esac
 done
 
-# ========== 启动服务 ==========
-echo ""
-
+# ========== 配置并启动系统服务 ==========
 if ! $DRY_RUN; then
     log_info "配置系统服务..."
+
+    # 确保 pnpm 路径
+    PNPM_PATH=$(which pnpm)
+    if [[ -z "$PNPM_PATH" ]]; then
+        log_err "找不到 pnpm，请确保 pnpm 已安装"
+        exit 1
+    fi
 
     sudo tee /etc/systemd/system/moltbot.service >/dev/null << SVC
 [Unit]
@@ -393,50 +760,103 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$MOLTBOT_DIR
-ExecStart=$(which pnpm) moltbot gateway run --bind 0.0.0.0 --port ${GATEWAY_PORT} --force
+ExecStart=$PNPM_PATH moltbot gateway run --bind 0.0.0.0 --port ${GATEWAY_PORT} --force
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 SVC
 
+    log_ok "systemd 服务配置完成"
+
+    log_info "重载 systemd 配置..."
     sudo systemctl daemon-reload
+
+    log_info "启用服务开机自启..."
     sudo systemctl enable moltbot >/dev/null 2>&1
+
+    log_info "启动 Moltbot 服务..."
     sudo systemctl restart moltbot
+
+    # 等待服务启动
     sleep 3
+
+    # 检查服务状态
+    if systemctl is-active --quiet moltbot; then
+        log_ok "Moltbot 服务启动成功\n"
+    else
+        log_err "Moltbot 服务启动失败"
+        echo ""
+        log_warn "查看错误日志:"
+        echo -e "${DIM}sudo journalctl -u moltbot -n 50 --no-pager${NC}"
+        echo ""
+        exit 1
+    fi
 else
-    echo -e "${DIM}[dry-run] 跳过 systemd 服务配置${NC}"
+    echo -e "${DIM}[dry-run] 跳过 systemd 服务配置${NC}\n"
 fi
 
-# ========== 完成 ==========
+# ========== 安装完成 ==========
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}                    安装完成！                          ${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "服务器:  ${BOLD}http://${SERVER_IP}${NC}"
-echo -e "Token:   ${GATEWAY_TOKEN}"
+echo -e "Token:   ${BOLD}${GATEWAY_TOKEN}${NC}"
 echo ""
 echo -e "${BOLD}管理后台:${NC}"
 echo -e "  访问:  ${CYAN}http://${SERVER_IP}/ui/${NC}"
 echo -e "  Token: ${GATEWAY_TOKEN}"
 echo ""
-echo "Webhook:"
+echo -e "${BOLD}Webhook 地址:${NC}"
 echo "  飞书:     http://${SERVER_IP}/api/webhook/feishu"
 echo "  企业微信: http://${SERVER_IP}/api/webhook/wecom"
 echo ""
-echo "命令:"
-echo "  sudo systemctl status moltbot    # 状态"
-echo "  sudo journalctl -u moltbot -f    # 日志"
-echo "  sudo systemctl restart moltbot   # 重启"
-echo "  bash ~/moltbot/scripts/install.sh # 重新配置"
+echo -e "${BOLD}管理命令:${NC}"
+echo "  sudo systemctl status moltbot       # 查看状态"
+echo "  sudo systemctl stop moltbot         # 停止服务"
+echo "  sudo systemctl start moltbot        # 启动服务"
+echo "  sudo systemctl restart moltbot      # 重启服务"
+echo "  sudo journalctl -u moltbot -f       # 查看实时日志"
+echo "  sudo journalctl -u moltbot -n 100   # 查看最近 100 行日志"
+echo ""
+echo -e "${BOLD}重新配置:${NC}"
+echo "  cd $MOLTBOT_DIR"
+echo "  bash scripts/install.sh"
 echo ""
 
-if $DRY_RUN; then
-    log_ok "[dry-run] 测试完成"
-elif systemctl is-active --quiet moltbot; then
-    log_ok "服务运行中"
+if ! $DRY_RUN; then
+    # 最终状态检查
+    SERVICE_STATUS="未知"
+    if systemctl is-active --quiet moltbot; then
+        SERVICE_STATUS="${GREEN}运行中${NC}"
+    else
+        SERVICE_STATUS="${RED}已停止${NC}"
+    fi
+
+    NGINX_STATUS="未知"
+    if systemctl is-active --quiet nginx; then
+        NGINX_STATUS="${GREEN}运行中${NC}"
+    else
+        NGINX_STATUS="${RED}已停止${NC}"
+    fi
+
+    echo -e "${BOLD}服务状态:${NC}"
+    echo -e "  Moltbot: $SERVICE_STATUS"
+    echo -e "  Nginx:   $NGINX_STATUS"
+    echo ""
+
+    if systemctl is-active --quiet moltbot && systemctl is-active --quiet nginx; then
+        log_ok "所有服务正常运行"
+        echo ""
+        echo -e "${CYAN}提示:${NC} 在浏览器访问 ${BOLD}http://${SERVER_IP}/ui/${NC} 开始使用"
+    else
+        log_warn "部分服务未运行，请检查日志"
+    fi
 else
-    log_warn "服务可能未启动，请检查: sudo journalctl -u moltbot -n 50"
+    log_ok "[dry-run] 测试完成"
 fi
