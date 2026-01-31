@@ -67,7 +67,7 @@
 git clone https://github.com/MindDock/moltbot.git
 cd moltbot
 # 或者先git clone到本地，通过rsync传到服务器 
-rsync -avz --progress /Volumes/MindDockSSD/projects/opensource/moltbot/ ubuntu@[服务器外网ip]:~/moltbot/ --exclude node_modules --exclude .git
+rsync -avz --progress ～/moltbot/ ubuntu@[服务器外网ip]:~/moltbot/ --exclude node_modules --exclude .git
 
 # 2. 一键安装
 ssh ~到主机
