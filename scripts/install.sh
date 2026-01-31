@@ -666,7 +666,30 @@ for n in "${ch_nums[@]}"; do
 
             log_info "安装飞书插件..."
             if ! $DRY_RUN; then
-                pnpm moltbot plugins install @m1heng-clawd/feishu 2>/dev/null || log_warn "插件可能已安装"
+                FEISHU_DIR="$MOLTBOT_DIR/extensions/feishu"
+                if [[ ! -d "$FEISHU_DIR" ]]; then
+                    log_info "从 GitHub 克隆飞书插件..."
+                    git clone --branch v0.1.2 --depth 1 https://github.com/m1heng/clawdbot-feishu.git "$FEISHU_DIR"
+                    
+                    log_info "修复插件兼容性..."
+                    cd "$FEISHU_DIR"
+                    # 修复 package.json: 添加 moltbot.extensions
+                    if ! grep -q '"moltbot"' package.json; then
+                        npm pkg set 'moltbot.extensions'='["./index.ts"]'
+                    fi
+                    # 修复导入路径: openclaw -> moltbot
+                    find . -name '*.ts' -exec sed -i 's/openclaw\/plugin-sdk/moltbot\/plugin-sdk/g' {} \;
+                    # 创建 manifest 文件
+                    if [[ -f openclaw.plugin.json && ! -f moltbot.plugin.json ]]; then
+                        cp openclaw.plugin.json moltbot.plugin.json
+                    fi
+                    # 安装依赖
+                    npm install --omit=dev
+                    cd - > /dev/null
+                    log_ok "飞书插件安装完成"
+                else
+                    log_warn "飞书插件已存在，跳过安装"
+                fi
             fi
 
             log_info "保存飞书配置 (WebSocket 长连接模式)..."
